@@ -434,9 +434,9 @@ handle_cast({commit_offset, Topic, Partition, Offset}, State) ->
 handle_cast({new_assignments, MemberId, GenerationId, Assignments},
             #state{ client          = Client
                   , consumer_config = ConsumerConfig
-                  , subscribe_tref  = Tref,
-                  cb_module = CbModule,
-                  cb_state = CbState
+                  , subscribe_tref  = Tref
+                  , cb_module = CbModule
+                  , cb_state = CbState
                   } = State) ->
   case erlang:function_exported(CbModule, new_assignments, 4) of
     true -> 
