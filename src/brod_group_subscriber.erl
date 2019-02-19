@@ -52,6 +52,7 @@
         , assignments_received/4
         , assignments_revoked/1
         , assign_partitions/3
+        , user_data/1
         ]).
 
 -export([ code_change/3
@@ -193,7 +194,7 @@
 %%   implemented for message processing.
 %% CbInitArg:
 %%   The term() that is going to be passed to CbModule:init/1 when
-%%   initializing the subscriger.
+%%   initializing the subscriber.
 %% @end
 -spec start_link(brod:client(), brod:group_id(), [brod:topic()],
                  brod:group_config(), brod:consumer_config(),
@@ -225,7 +226,7 @@ start_link(Client, GroupId, Topics, GroupConfig,
 %%   implemented for message processing.
 %% CbInitArg:
 %%   The term() that is going to be passed to CbModule:init/1 when
-%%   initializing the subscriger.
+%%   initializing the subscriber.
 %% @end
 -spec start_link(brod:client(), brod:group_id(), [brod:topic()],
                  brod:group_config(), brod:consumer_config(),
@@ -275,6 +276,8 @@ commit(Pid) ->
 -spec commit(pid(), brod:topic(), brod:partition(), brod:offset()) -> ok.
 commit(Pid, Topic, Partition, Offset) ->
   gen_server:cast(Pid, {commit_offset, Topic, Partition, Offset}).
+
+user_data(_Pid) -> <<>>.
 
 %%%_* APIs for group coordinator ===============================================
 
@@ -569,16 +572,18 @@ handle_ack(AckRef, #state{ generationId = GenerationId
                          , coordinator  = Coordinator
                          } = State, CommitNow) ->
   {Topic, Partition, Offset} = AckRef,
-  Consumer = get_consumer({Topic, Partition}, Consumers),
-  #consumer{consumer_pid = ConsumerPid} = Consumer,
-  ok = consume_ack(ConsumerPid, Offset),
-  case CommitNow of
-    true ->
+  case get_consumer({Topic, Partition}, Consumers) of
+    #consumer{consumer_pid = ConsumerPid} = Consumer when CommitNow ->
+      ok = consume_ack(ConsumerPid, Offset),
       ok = do_commit_ack(Coordinator, GenerationId, Topic, Partition, Offset),
       NewConsumer = Consumer#consumer{acked_offset = Offset},
       NewConsumers = put_consumer(NewConsumer, Consumers),
       State#state{consumers = NewConsumers};
+    #consumer{consumer_pid = ConsumerPid} ->
+      ok = consume_ack(ConsumerPid, Offset),
+      State;
     false ->
+      %% Stale async-ack, discard.
       State
   end.
 
@@ -608,7 +613,7 @@ subscribe_partition(Client, Consumer) ->
   case brod_utils:is_pid_alive(Pid) of
     true ->
       Consumer;
-    false when AckedOffset =/= LastOffset ->
+    false when AckedOffset =/= LastOffset andalso LastOffset =/= ?undef ->
       %% The last fetched offset is not yet acked,
       %% do not re-subscribe now to keep it simple and slow.
       %% Otherwise if we subscribe with {begin_offset, LastOffset + 1}

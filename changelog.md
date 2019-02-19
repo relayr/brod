@@ -129,3 +129,18 @@
   * `brod_client:get_connection` is back
   * Make it possible to run tests on both mac and linux
   * Position group leader member at the head of members list when assigning partitions
+* 3.7.2
+  * Pr #298: Subscriber now automatically reconnects to Kafka on topic rebalances where
+    the previous partition leader no longer holds the partition at all.
+  * Pr #299: Fix topic subscriber returning partition offsets from callback module's init.
+* 3.7.3
+  * Bump kafka_protocol version to 2.2.3
+  * Discard stale async-ack messages to group subscriber
+* 3.7.4
+  * Add callback to make user_data in group join request
+* 3.7.5
+  * Bump kafka protocol version to 2.2.7
+  * Fix empty assignment handling. In case a group member has no partition assigned,
+    `member_assignment` data field in group sync response can either be `null` (kafka 0.10)
+    or a struct having empty `topic_partitions` (kafka 0.11 or later). The later case
+    was not handled properly in `brod` before this fix.

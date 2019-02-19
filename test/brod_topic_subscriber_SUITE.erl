@@ -36,6 +36,7 @@
         , t_demo/1
         , t_demo_message_set/1
         , t_consumer_crash/1
+        , t_begin_offset/1
         ]).
 
 
@@ -45,7 +46,7 @@
 
 -define(CLIENT_ID, ?MODULE).
 -define(TOPIC, list_to_binary(atom_to_list(?MODULE))).
--define(config(Name), proplists:get_value(Name, Config)).
+-define(BOOTSTRAP_HOSTS, [{"localhost", 9092}]).
 
 %%%_* ct callbacks =============================================================
 
@@ -60,11 +61,10 @@ end_per_suite(_Config) -> ok.
 init_per_testcase(Case, Config) ->
   ct:pal("=== ~p begin ===", [Case]),
   ClientId       = ?CLIENT_ID,
-  BootstrapHosts = [{"localhost", 9092}],
   ClientConfig   = client_config(),
   Topic          = ?TOPIC,
   ok = brod_demo_topic_subscriber:delete_commit_history(?TOPIC),
-  ok = brod:start_client(BootstrapHosts, ClientId, ClientConfig),
+  ok = brod:start_client(?BOOTSTRAP_HOSTS, ClientId, ClientConfig),
   ok = brod:start_producer(ClientId, Topic, _ProducerConfig = []),
   Config.
 
@@ -87,12 +87,14 @@ all() -> [F || {F, _A} <- module_info(exports),
                , is_async_ack
                }).
 
-init(_Topic, {CaseRef, CasePid, IsAsyncAck}) ->
+init(Topic, {CaseRef, CasePid, IsAsyncAck}) ->
+  init(Topic, {CaseRef, CasePid, IsAsyncAck, _CommittedOffsets = []});
+init(_Topic, {CaseRef, CasePid, IsAsyncAck, CommittedOffsets}) ->
   State = #state{ ct_case_ref  = CaseRef
                 , ct_case_pid  = CasePid
                 , is_async_ack = IsAsyncAck
                 },
-  {ok, [], State}.
+  {ok, CommittedOffsets, State}.
 
 handle_message(Partition, Message, #state{ ct_case_ref  = Ref
                                          , ct_case_pid  = Pid
@@ -192,6 +194,46 @@ t_async_acks(Config) when is_list(Config) ->
   Timeouts = lists:duplicate(MaxSeqNo, 5) ++ lists:duplicate(5, 1000),
   ReceivedL = lists:foldl(RecvFun, [], Timeouts ++ [1,2,3,4,5]),
   ?assertEqual(L, lists:reverse(ReceivedL)),
+  ok = brod_topic_subscriber:stop(SubscriberPid),
+  ok.
+
+t_begin_offset(Config) when is_list(Config) ->
+  ConsumerConfig = [ {prefetch_count, 100}
+                   , {prefetch_bytes, 0} %% as discard
+                   , {sleep_timeout, 0}
+                   , {max_wait_time, 1000}
+                   ],
+  CaseRef = t_begin_offset,
+  CasePid = self(),
+  Partition = 0,
+  SendFun =
+    fun(I) ->
+      Value = integer_to_binary(I),
+      {ok, Offset} = brod:produce_sync_offset(?CLIENT_ID, ?TOPIC, Partition, <<>>, Value),
+      Offset
+    end,
+  RecvFun =
+    fun F(Pid, Timeout, Acc) ->
+      receive
+        {CaseRef, Partition, Offset, Value} ->
+          ok = brod_topic_subscriber:ack(Pid, Partition, Offset),
+          I = binary_to_integer(Value),
+          F(Pid, 0, [{Offset, I} | Acc]);
+        Msg ->
+          erlang:error({unexpected_msg, Msg})
+      after Timeout ->
+        Acc
+      end
+    end,
+  _Offset0 = SendFun(111),
+  Offset1 = SendFun(222),
+  Offset2 = SendFun(333),
+  %% Start as if committed Offset1, expect it to start fetching from Offset2
+  InitArgs = {CaseRef, CasePid, _IsAsyncAck = true, _ConsumerOffsets = [{0, Offset1}]},
+  {ok, SubscriberPid} =
+    brod:start_link_topic_subscriber(?CLIENT_ID, ?TOPIC, ConsumerConfig,
+                                     ?MODULE, InitArgs),
+  ?assertEqual([{Offset2, 333}], RecvFun(SubscriberPid, 5000, [])),
   ok = brod_topic_subscriber:stop(SubscriberPid),
   ok.
 
