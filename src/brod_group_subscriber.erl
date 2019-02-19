@@ -122,6 +122,15 @@
 %                            [{brod:topic(), brod:partition()}],
 %                            cb_state()) -> [{brod:group_member_id(),
 %                                             [brod:partition_assignment()]}].
+% 
+%% This function is called after partition rebalancing and before consumer startup. Its goal is to
+%% provide notification for every consumer in group about partition assigments.
+%  
+% commented out as it's an optional callback
+% -callback new_assignments(brod:group_member_id(),
+%                           brod:group_generation_id(),
+%                           brod:received_assignments(),
+%                           cb_state()) -> ok.
 
 -define(DOWN(Reason), {down, brod_utils:os_time_utc_str(), Reason}).
 
@@ -425,8 +434,16 @@ handle_cast({commit_offset, Topic, Partition, Offset}, State) ->
 handle_cast({new_assignments, MemberId, GenerationId, Assignments},
             #state{ client          = Client
                   , consumer_config = ConsumerConfig
-                  , subscribe_tref  = Tref
+                  , subscribe_tref  = Tref,
+                  cb_module = CbModule,
+                  cb_state = CbState
                   } = State) ->
+  case erlang:function_exported(CbModule, new_assignments, 4) of
+    true -> 
+      ok = CbModule:new_assignments(MemberId, GenerationId, Assignments, CbState);
+    false -> 
+      ok
+  end,
   AllTopics =
     lists:map(fun(#brod_received_assignment{topic = Topic}) ->
                 Topic
