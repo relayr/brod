@@ -7,14 +7,15 @@ services:
 
 # install latest rebar3 because the one travis provides doesn't support cover_export_name option
 before_install:
-  - git clone https://github.com/erlang/rebar3.git; cd rebar3; ./bootstrap; sudo mv rebar3 /usr/local/bin/; cd ..
-  - git clone https://github.com/inaka/elvis.git; cd elvis; rebar3 escriptize; sudo cp _build/default/bin/elvis /usr/bin; cd ..
+  - git clone https://github.com/erlang/rebar3.git && cd rebar3 && git checkout 3.11.1 && ./bootstrap && sudo mv rebar3 /usr/local/bin/ && cd ..
+  - git clone https://github.com/inaka/elvis.git && cd elvis && rebar3 escriptize && sudo cp _build/default/bin/elvis /usr/bin && cd ..
   - sudo docker info
 
 notifications:
   email: false
 
 otp_release:
+  - 22.0.2
   - 21.0
   - 20.3
   - 19.3
@@ -38,11 +39,15 @@ script:
   - |
     set -e
     OTP_VSN=`erl -noshell -eval 'io:format(erlang:system_info(otp_release)), halt(0)'`
-    if [ $OTP_VSN -eq 21 ]; then
-      # run dialyzer only in otp 21
+    if [ $OTP_VSN -eq 22 ]; then
+      # run dialyzer only in otp 22
       rebar3 dialyzer
-      # test against kafka 0.9 in otp 21
+      # test against kafka 0.9 in otp 22
       export KAFKA_VERSION="0.9"
+    fi
+    if [ $OTP_VSN -eq 21 ]; then
+      # test against kafka 2.2 in otp 21
+      export KAFKA_VERSION="2.2"
     fi
     if [ $OTP_VSN -eq 20 ]; then
       # test against kafka 0.10 in otp 20
@@ -67,4 +72,3 @@ after_success:
     if [ $OTP_VSN -eq 21 ]; then
       make coveralls
     fi
-
